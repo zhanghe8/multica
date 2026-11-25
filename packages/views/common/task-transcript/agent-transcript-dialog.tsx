@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, forwardRef } from "react";
+import { AnimatePresence, motion, useIsPresent } from "motion/react";
+import { prefersReducedMotion, useReducedMotion } from "@multica/core/appearance";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { UI_EASE_IN, UI_EASE_OUT, UI_EASE_OUT_CSS, UI_MOTION_DURATION } from "@multica/ui/lib/motion";
 import { useTraceIssueLabels } from "./use-trace-issue-labels";
 import { Virtuoso, type VirtuosoHandle, type Components } from "react-virtuoso";
 import {
@@ -12,8 +15,6 @@ import {
   XCircle,
   X,
   Loader2,
-  Copy,
-  Check,
   ChevronRight,
   Filter,
   FilePen,
@@ -29,8 +30,10 @@ import {
   GitBranch,
 } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { Button } from "@multica/ui/components/ui/button";
+import { CopyCheckIcon } from "@multica/ui/components/common/copy-check-icon";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
@@ -44,7 +47,7 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../actor-avatar";
 import { AttributionBadge } from "../../issues/components/attribution-badge";
-import { plainTriggerSummary } from "../../issues/components/task-run-labels";
+import { plainTriggerSummary, useFormatSpend } from "../../issues/components/task-run-labels";
 import { cancellationActorLabel, cancelReasonLabel, failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { RichContent } from "../../rich-content";
 import { api } from "@multica/core/api";
@@ -80,6 +83,7 @@ import {
 } from "./build-steps";
 import { buildRunOutcome } from "./run-outcome";
 import { RunTimeline } from "./run-timeline";
+import { ContextReceiptButton } from "./context-receipt";
 import {
   base64ByteLength,
   readImageResult,
@@ -91,6 +95,7 @@ import {
 } from "./trace-event-presenter";
 import type { TraceSummaryLabels } from "./trace-event-presenter";
 import {
+  CommandDetailSurface,
   DiffDetailSurface,
   FileWriteSurface,
   PatchDetailSurface,
@@ -100,7 +105,7 @@ import { languageForPath } from "./diff-highlight";
 import { useLocale, useT } from "../../i18n";
 import {
   formatTokens,
-  formatUsd,
+  hasTokenFigure,
   summarizeTaskUsage,
 } from "../../runtimes/utils";
 import { formatBytes } from "../format-bytes";
@@ -254,11 +259,11 @@ function RunDetailRow({
           <span className="text-muted-foreground">{label}</span>
           <span className="flex min-w-0 items-start gap-1.5">
             <span className={cn(valueClass, "flex-1")}>{value}</span>
-            {copied ? (
-              <Check className="mt-0.5 h-3 w-3 shrink-0 text-success" />
-            ) : (
-              <Copy className="mt-0.5 h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
-            )}
+            <CopyCheckIcon
+              copied={Boolean(copied)}
+              className="mt-0.5 h-3 w-3 shrink-0"
+              copyClassName="opacity-0 group-hover:opacity-100"
+            />
           </span>
         </button>
       </TooltipHint>
@@ -326,6 +331,7 @@ export function AgentTranscriptDialog({
   contentState,
 }: AgentTranscriptDialogProps) {
   const { t } = useT("agents");
+  const formatSpend = useFormatSpend();
   const locale = useLocale();
   const formatText = useTraceIssueLabels(useWorkspaceId(), task.issue_id, items, open);
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
@@ -624,6 +630,30 @@ export function AgentTranscriptDialog({
     return () => { cancelled = true; };
   }, [open, task.agent_id, task.runtime_id]);
 
+  const reduceMotion = useReducedMotion();
+  const isMobile = useIsMobile();
+  // Track rows that arrive live while the transcript is open so only newly
+  // streamed steps fade in (never historical rows mounted during Virtuoso scroll).
+  const knownSeqsRef = useRef<{ taskId: string; seqs: Set<number> } | null>(null);
+  const [enteringSeqs, setEnteringSeqs] = useState<ReadonlySet<number>>(() => new Set());
+  useEffect(() => {
+    if (!knownSeqsRef.current || knownSeqsRef.current.taskId !== task.id) {
+      knownSeqsRef.current = { taskId: task.id, seqs: new Set(displayRows.map((row) => row.seq)) };
+      setEnteringSeqs((prev) => (prev.size === 0 ? prev : new Set()));
+      return;
+    }
+    const added: number[] = [];
+    for (const row of displayRows) {
+      if (!knownSeqsRef.current.seqs.has(row.seq)) {
+        knownSeqsRef.current.seqs.add(row.seq);
+        if (isLive) added.push(row.seq);
+      }
+    }
+    if (added.length > 0) {
+      setEnteringSeqs((prev) => new Set([...prev, ...added]));
+    }
+  }, [task.id, displayRows, isLive]);
+
   // Elapsed time for live tasks
   useEffect(() => {
     if (!isLive || (!task.started_at && !task.dispatched_at)) return;
@@ -868,7 +898,7 @@ export function AgentTranscriptDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="!max-w-5xl !w-[calc(100vw-4rem)] !max-h-[calc(100vh-4rem)] !h-[calc(100vh-4rem)] flex flex-col !p-0 !gap-0 overflow-hidden"
+        className="!max-w-5xl !w-[calc(100%-4rem)] !max-h-[calc(100%-4rem)] !h-[calc(100%-4rem)] flex flex-col !p-0 !gap-0 overflow-hidden"
         showCloseButton={false}
         finalFocus={finalFocus}
       >
@@ -932,13 +962,20 @@ export function AgentTranscriptDialog({
                 title={t(($) => $.transcript.usage_chip_title)}
               >
                 <Coins aria-hidden="true" className="h-3 w-3 text-muted-foreground" />
-                <span className="font-medium">{formatTokens(usage.tokens)}</span>
-                <span className="text-faint-foreground">·</span>
-                <span className="text-muted-foreground">{formatUsd(usage.cost)}</span>
+                {hasTokenFigure(usage) && (
+                  <>
+                    <span className="font-medium">{formatTokens(usage.tokens)}</span>
+                    <span className="text-faint-foreground">·</span>
+                  </>
+                )}
+                <span className="text-muted-foreground">{formatSpend(usage)}</span>
               </span>
             )}
 
             <div className="flex shrink-0 items-center gap-0.5">
+              {/* What the agent was handed (MUL-9013). Renders nothing for
+                  runs whose daemon predates the receipt. */}
+              <ContextReceiptButton taskId={task.id} open={open} />
               {hasRunDetails && (
                 <Popover>
                   <PopoverTrigger
@@ -1067,7 +1104,7 @@ export function AgentTranscriptDialog({
                           )}
                           <RunDetailRow
                             label={t(($) => $.transcript.details_cost)}
-                            value={formatUsd(usage.cost)}
+                            value={formatSpend(usage)}
                           />
                         </>
                       )}
@@ -1213,7 +1250,7 @@ export function AgentTranscriptDialog({
                   : t(($) => $.transcript.sort_chronological)}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleCopyAll}>
-                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                <CopyCheckIcon copied={copied} />
                 {copyTranscriptLabel}
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -1268,6 +1305,7 @@ export function AgentTranscriptDialog({
                     formatText={formatText}
                     runStartMs={runStartMs}
                     isLive={isLive}
+                    entering={isLive && enteringSeqs.has(row.seq)}
                     selectedSeq={selectedSeq}
                     expanded={row.kind === "group" && expandedGroups.has(row.seq)}
                     onToggleGroup={handleToggleGroup}
@@ -1277,16 +1315,62 @@ export function AgentTranscriptDialog({
               />
             )}
           </div>
-          {selectedStep && (
-            <StepInspector
-              step={selectedStep}
-              runStartMs={runStartMs}
-              onClose={() => setSelectedSeq(null)}
-            />
-          )}
+          <AnimatePresence initial={false}>
+            {selectedStep && (
+              <StepInspectorDrawer
+                key="step-inspector-drawer"
+                isMobile={isMobile}
+                reduceMotion={reduceMotion}
+              >
+                <StepInspector
+                  step={selectedStep}
+                  runStartMs={runStartMs}
+                  onClose={() => setSelectedSeq(null)}
+                />
+              </StepInspectorDrawer>
+            )}
+          </AnimatePresence>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function StepInspectorDrawer({
+  isMobile,
+  reduceMotion,
+  children,
+}: {
+  isMobile: boolean;
+  reduceMotion: boolean;
+  children: React.ReactNode;
+}) {
+  const isPresent = useIsPresent();
+  return (
+    <motion.div
+      inert={!isPresent}
+      // Width is always owned by motion: below md the inspector
+      // fills the dialog (its close button must stay in view), so
+      // it only fades; from md up it slides in as a drawer.
+      initial={reduceMotion ? false : { opacity: 0, width: isMobile ? "100%" : 0 }}
+      animate={{
+        opacity: 1,
+        width: isMobile ? "100%" : "auto",
+        transition: { duration: reduceMotion ? 0 : 0.2, ease: UI_EASE_OUT },
+      }}
+      exit={
+        reduceMotion
+          ? { opacity: 0, transition: { duration: 0 } }
+          : {
+              opacity: 0,
+              ...(isMobile ? {} : { width: 0 }),
+              transition: { duration: UI_MOTION_DURATION.fast, ease: UI_EASE_IN },
+            }
+      }
+      className="flex shrink-0 overflow-hidden"
+    >
+      {children}
+    </motion.div>
   );
 }
 
@@ -1407,6 +1491,7 @@ interface TranscriptRowProps {
   row: TraceRow;
   runStartMs?: number;
   isLive: boolean;
+  entering?: boolean;
   selectedSeq: number | null;
   expanded: boolean;
   onToggleGroup: (seq: number) => void;
@@ -1414,10 +1499,27 @@ interface TranscriptRowProps {
 }
 
 function TranscriptRow(props: TranscriptRowProps) {
-  const { row } = props;
-  if (isGroupRow(row)) return <GroupRow {...props} row={row} />;
-  if (!isCallStep(row) && row.kind === "text") return <ProseRow {...props} row={row} />;
-  return <StepRow {...props} row={row} />;
+  const { row, entering } = props;
+  const rowRef = useRef<HTMLDivElement>(null);
+  const animatedRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!entering || animatedRef.current) return;
+    animatedRef.current = true;
+    const el = rowRef.current;
+    if (!el || typeof el.animate !== "function" || prefersReducedMotion()) return;
+    const anim = el.animate(
+      [{ opacity: 0, transform: "translateY(3px)" }, { opacity: 1, transform: "translateY(0)" }],
+      { duration: 140, easing: UI_EASE_OUT_CSS },
+    );
+    return () => { anim.cancel(); };
+  }, [entering]);
+
+  const content = isGroupRow(row)
+    ? <GroupRow {...props} row={row} />
+    : !isCallStep(row) && row.kind === "text"
+      ? <ProseRow {...props} row={row} />
+      : <StepRow {...props} row={row} />;
+  return entering ? <div ref={rowRef}>{content}</div> : content;
 }
 
 /** The offset column: where in the run this happened. */
@@ -1623,7 +1725,7 @@ function GroupRow({
         <ChevronRight
           aria-hidden
           className={cn(
-            "mt-1 h-3 w-3 shrink-0 text-faint-foreground transition-transform",
+            "mt-1 h-3 w-3 shrink-0 text-faint-foreground transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
             expanded && "rotate-90",
           )}
         />
@@ -1711,6 +1813,7 @@ function StepInspector({
   onClose: () => void;
 }) {
   const { t } = useT("agents");
+  const reduceMotion = useReducedMotion();
   const [copied, showCopied] = useCopyFeedback();
 
   const at = timeMs(step.startedAt);
@@ -1771,7 +1874,7 @@ function StepInspector({
           tooltipSide="bottom"
           className="shrink-0 text-muted-foreground"
         >
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          <CopyCheckIcon copied={copied} />
         </IconButton>
         <IconButton
           variant="ghost"
@@ -1785,24 +1888,31 @@ function StepInspector({
         </IconButton>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {call ? (
-          <>
-            {call.call && (
-              <InspectorSection label={t(($) => $.transcript.step_input)}>
-                <StepBody item={call.call} />
-              </InspectorSection>
-            )}
-            {call.result && (
-              <InspectorSection label={t(($) => $.transcript.step_result)}>
-                <StepBody item={call.result} />
-              </InspectorSection>
-            )}
-          </>
-        ) : (
-          <InspectorSection label={title}>
-            <ToolDetailSurface text={redactSecrets(message?.item.content ?? "")} />
-          </InspectorSection>
-        )}
+        <motion.div
+          key={step.seq}
+          initial={reduceMotion ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: reduceMotion ? 0 : 0.12, ease: UI_EASE_OUT }}
+        >
+          {call ? (
+            <>
+              {call.call && (
+                <InspectorSection label={t(($) => $.transcript.step_input)}>
+                  <StepBody item={call.call} />
+                </InspectorSection>
+              )}
+              {call.result && (
+                <InspectorSection label={t(($) => $.transcript.step_result)}>
+                  <StepBody item={call.result} />
+                </InspectorSection>
+              )}
+            </>
+          ) : (
+            <InspectorSection label={title}>
+              <ToolDetailSurface text={redactSecrets(message?.item.content ?? "")} />
+            </InspectorSection>
+          )}
+        </motion.div>
       </div>
     </aside>
   );
@@ -1849,6 +1959,12 @@ export function StepBody({ item }: { item: TimelineItem }) {
     );
   }
 
+  // Tool input has no server-side budget, so it is clipped for display.
+  const clipForDisplay = (text: string) =>
+    text.length > DISPLAY_CLIP_CHARS
+      ? `${redactSecrets(text.slice(0, DISPLAY_CLIP_CHARS))}\n${t(($) => $.transcript.display_clipped)}`
+      : redactSecrets(text);
+
   switch (detail.kind) {
     case "diff":
       return <DiffDetailSurface lines={detail.lines} path={detail.path} />;
@@ -1856,18 +1972,19 @@ export function StepBody({ item }: { item: TimelineItem }) {
       return <PatchDetailSurface files={detail.files} truncated={detail.truncated} />;
     case "file":
       return <FileWriteSurface text={detail.text} lineCount={detail.lineCount} path={detail.path} />;
+    case "command":
+      return (
+        <CommandDetailSurface
+          command={clipForDisplay(detail.command)}
+          params={detail.params && clipForDisplay(detail.params)}
+        />
+      );
     default: {
-      const text = detail.text;
       // A stored tool result is already capped at 8192 bytes by the daemon, so
       // clipping it again could only shave a couple of hundred more characters
-      // — under a note that already reports the same loss. Tool input has no
-      // server-side budget and keeps the clip at its existing length; nothing
-      // about how long an input renders is this change's business.
-      const clip = item.type === "tool_result" ? null : DISPLAY_CLIP_CHARS;
+      // — under a note that already reports the same loss.
       const clipped =
-        clip !== null && text.length > clip
-          ? `${redactSecrets(text.slice(0, clip))}\n${t(($) => $.transcript.display_clipped)}`
-          : redactSecrets(text);
+        item.type === "tool_result" ? redactSecrets(detail.text) : clipForDisplay(detail.text);
       const path = item.type === "tool_use" ? readPathFromInput(item.input) : undefined;
       return (
         <ToolDetailSurface

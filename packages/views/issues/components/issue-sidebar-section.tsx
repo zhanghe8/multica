@@ -1,11 +1,19 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useReducedMotion } from "@multica/core/appearance";
 import { ChevronRight } from "@multica/ui/icons";
 import { Button, buttonVariants } from "@multica/ui/components/ui/button";
+import { Collapsible, CollapsibleContent } from "@multica/ui/components/ui/collapsible";
 import { cn } from "@multica/ui/lib/utils";
 
-/** Shared disclosure header; actions stay outside the disclosure button. */
+/**
+ * Shared disclosure header; actions stay outside the disclosure button.
+ *
+ * Inset like a `PropRow` (`px-2` around an 8px hit-area padding) so the title
+ * starts on the same edge as the labels and rows of every section body under
+ * it. The padding is 7px because `Button` adds a 1px transparent border.
+ */
 export function IssueSidebarSectionHeader({
   title, open, onOpenChange, count, actions, status, id, collapsible = true,
 }: {
@@ -19,7 +27,7 @@ export function IssueSidebarSectionHeader({
   id?: string;
 }) {
   return (
-    <div className="mb-1 flex min-w-0 items-center gap-1">
+    <div data-slot="issue-sidebar-section-header" className="mb-1 flex min-w-0 items-center gap-1 px-2">
       {collapsible ? <Button
         id={id}
         type="button"
@@ -27,10 +35,10 @@ export function IssueSidebarSectionHeader({
         size="sm"
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
-        className={cn("min-w-0 flex-1 shrink justify-start font-medium aria-expanded:bg-transparent active:not-aria-[haspopup]:translate-y-0", !open && "text-muted-foreground")}
+        className={cn("min-w-0 flex-1 shrink justify-start px-[7px] font-medium aria-expanded:bg-transparent active:not-aria-[haspopup]:translate-y-0", !open && "text-muted-foreground")}
       >
         <span className="truncate">{title}</span>
-        <ChevronRight aria-hidden="true" className={cn("!size-3 shrink-0 text-faint-foreground transition-transform motion-reduce:transition-none", open && "rotate-90")} />
+        <ChevronRight aria-hidden="true" className={cn("!size-3 shrink-0 text-faint-foreground transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none", open && "rotate-90")} />
         {count !== undefined && count > 0 && (
           <>
             {" "}
@@ -38,7 +46,7 @@ export function IssueSidebarSectionHeader({
           </>
         )}
       </Button> : (
-        <div id={id} className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "min-w-0 flex-1 shrink justify-start font-medium hover:bg-transparent dark:hover:bg-transparent")}>
+        <div id={id} className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "min-w-0 flex-1 shrink justify-start px-[7px] font-medium hover:bg-transparent dark:hover:bg-transparent")}>
           <span className="truncate">{title}</span>
         </div>
       )}
@@ -48,9 +56,30 @@ export function IssueSidebarSectionHeader({
   );
 }
 
+/** Shared smooth height + opacity collapse for issue sidebar & detail sections. */
+export function IssueSidebarCollapsible({
+  open,
+  children,
+  className,
+}: {
+  open: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  const reduceMotion = useReducedMotion();
+
+  return (
+    <Collapsible open={open}>
+      <CollapsibleContent className={cn(reduceMotion && "transition-none", className)}>
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 /** Shared spacing separates rendered sections without adding divider lines. */
-export function IssueSidebarStack({ children }: { children: ReactNode }) {
-  return <div className="flex flex-col gap-6 [overflow-anchor:none] [&>*]:flow-root">{children}</div>;
+export function IssueSidebarStack({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("flex flex-col gap-6 [overflow-anchor:none] [&>*]:flow-root", className)}>{children}</div>;
 }
 
 /** Fits labels to their content while reserving space for values and the hover gutter. */

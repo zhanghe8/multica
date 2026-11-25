@@ -132,11 +132,25 @@ const (
 	// leaderWorkflowCurrentDaemon: the runtime brief points at
 	// [Project workflow] and states no built-in moves.
 	leaderWorkflowCurrentDaemon
+	// leaderWorkflowStatusMap: [Project workflow] is a status map with no
+	// per-step commands; the runtime brief states its rules (MUL-9913).
+	leaderWorkflowStatusMap
 	// leaderWorkflowLegacyDaemon: the runtime brief still says to set
 	// in_progress first and in_review on delivery, so responsibility 6 has
 	// to rule those moves out for this issue.
 	leaderWorkflowLegacyDaemon
+	// leaderWorkflowStepMoved: the run's binding no longer matches the issue,
+	// so it must leave status unchanged even when its squad owns the issue.
+	leaderWorkflowStepMoved
 )
+
+const squadParentStatusStepMoved = `6. **Leave the parent issue's status unchanged for this run.** This issue
+   is assigned to your squad, but this run's workflow binding no longer matches
+   the issue's current step. Follow the explanation in ` + "`" + `[Project workflow]` + "`" + `.
+   Keep the current status even when you confirm the overall goal is met; do
+   not change it to mark progress or delivery. This overrides the status rules
+   in your runtime instructions. Leave a comment if something needs attention;
+   a member can review the current state and explicitly rerun the work.`
 
 // squadParentStatusOwnedInWorkflow is responsibility 6 for an owning leader
 // whose issue follows a project workflow that came with the claim (MUL-8145).
@@ -149,12 +163,32 @@ const (
 const squadParentStatusOwnedInWorkflow = `6. **Own the parent issue status — through its project workflow.** This issue
    is assigned to your squad and follows its project workflow, so its status
    is yours to move (unless Agent Identity forbids status changes), using only
-   the commands in ` + "`" + `[Project workflow]` + "`" + `. The parent stays at its
+   the commands in ` + "`" + `[Project workflow]` + "`" + `. Delegate only the current
+   step's work and pass its instructions and constraints to members in your
+   delegation comment; their observer brief does not include step instructions.
+   The parent stays at its
    current step while members work — a successful dispatch is not completion.
    On later turns, do not move it for routine progress updates. When you
-   confirm the overall goal is met, run that block's Step done command — this
+   confirm the current step's goal is met, run that block's Step done command — this
    responsibility is itself the standing instruction that authorizes that
    change, so do it even when no comment asked you to.`
+
+// squadParentStatusOwnedInStatusMap is squadParentStatusOwnedInWorkflow for
+// a [Project workflow] status map, which lists no Step done command: the
+// leader picks the status from the map once the step's goal is met.
+const squadParentStatusOwnedInStatusMap = `6. **Own the parent issue status — through its project workflow.** This issue
+   is assigned to your squad and follows its project workflow, so its status
+   is yours to move (unless Agent Identity forbids status changes), using only
+   the statuses in the ` + "`" + `[Project workflow]` + "`" + ` status map. Delegate only the current
+   step's work and pass its instructions and constraints to members in your
+   delegation comment; their observer brief does not include step instructions.
+   The parent stays at its
+   current step while members work — a successful dispatch is not completion.
+   On later turns, do not move it for routine progress updates. When you
+   confirm the current step's goal is met, move it to the status the map gives
+   for that step's finished work — this responsibility is itself the standing
+   instruction that authorizes that change, so do it even when no comment
+   asked you to.`
 
 // squadParentStatusWorkflowOverridesRuntime follows
 // squadParentStatusOwnedInWorkflow for a daemon whose runtime brief still
@@ -227,8 +261,12 @@ const squadSteerRule = `- A worker already running on this issue gets a new comm
 func squadOperatingProtocolFor(ownsIssueStatus bool, workflow leaderWorkflow) string {
 	status := squadParentStatusNotOwned
 	switch {
+	case ownsIssueStatus && workflow == leaderWorkflowStepMoved:
+		status = squadParentStatusStepMoved
 	case ownsIssueStatus && workflow == leaderWorkflowCurrentDaemon:
 		status = squadParentStatusOwnedInWorkflow
+	case ownsIssueStatus && workflow == leaderWorkflowStatusMap:
+		status = squadParentStatusOwnedInStatusMap
 	case ownsIssueStatus && workflow == leaderWorkflowLegacyDaemon:
 		status = squadParentStatusOwnedInWorkflow + squadParentStatusWorkflowOverridesRuntime
 	case ownsIssueStatus:

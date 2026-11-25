@@ -1,6 +1,6 @@
 "use client";
 
-import { IssueSidebarSectionHeader } from "./issue-sidebar-section";
+import { IssueSidebarCollapsible, IssueSidebarSectionHeader } from "./issue-sidebar-section";
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -16,7 +16,7 @@ import {
   useTriggerIssueWakeup,
   issueTasksOptions,
 } from "@multica/core/issues";
-import type { AgentTask, IssueWakeup, WakeupCondition } from "@multica/core/types";
+import type { AgentTask, IssueWakeup, SystemWakeup, WakeupCondition } from "@multica/core/types";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import {
   Popover,
@@ -392,6 +392,19 @@ export function WakeupsSection({
   if (closed && !hasContent) return null;
   const current = data.filter((w) => isCurrentWakeup(w, wakeupRun(w, tasks)));
   const history = data.filter((w) => !isCurrentWakeup(w, wakeupRun(w, tasks)));
+  const visibleSystemRules = closed ? [] : systemRules;
+  const currentSystemRules = visibleSystemRules.filter((rule) => rule.enabled);
+  const offSystemRules = visibleSystemRules.filter((rule) => !rule.enabled);
+  const historyCount = history.length + offSystemRules.length;
+  const systemRow = (rule: SystemWakeup) => (
+    <SystemWakeupRow
+      key={rule.rule}
+      rule={rule}
+      workspaceId={workspaceId}
+      issueId={issueId}
+      onTurnedOff={() => setHistoryOpen(true)}
+    />
+  );
   const row = (wakeup: IssueWakeup) => (
     <WakeupRow
       key={wakeup.id}
@@ -426,11 +439,11 @@ export function WakeupsSection({
       <IssueSidebarSectionHeader
         id={`issue-wakeups-${issueId}`}
         title={t(($) => $.wakeups.title)} open={open} onOpenChange={setOpen}
-        count={current.length + (!closed ? systemRules.length : 0)}
+        count={current.length + currentSystemRules.length}
         collapsible={hasContent}
         actions={!closed ? <WakeupCreate workspaceId={workspaceId} issueId={issueId} defaultAgentId={defaultAgentId} /> : undefined}
       />
-      {open && hasContent && (
+      <IssueSidebarCollapsible open={open && hasContent}>
         <div className="px-2">
           {isError && (
             <button
@@ -446,30 +459,30 @@ export function WakeupsSection({
               {t(($) => $.wakeups.closed_hint)}
             </p>
           )}
-          {!closed &&
-            systemRules.map((rule) => (
-              <SystemWakeupRow key={rule.rule} rule={rule} workspaceId={workspaceId} issueId={issueId} />
-            ))}
+          {currentSystemRules.map(systemRow)}
           {current.map(row)}
-          {history.length > 0 && (
+          {historyCount > 0 && (
             <>
               <button
                 type="button"
                 aria-expanded={historyOpen}
                 onClick={() => setHistoryOpen(!historyOpen)}
-                className="flex min-h-9 w-full items-center gap-1 rounded-md px-2 py-1 text-label text-muted-foreground hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-ring"
+                className="flex min-h-9 w-full items-center gap-1 rounded-md px-2 py-1 text-label text-muted-foreground transition-colors hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-ring"
               >
                 <ChevronRight
-                  className={`size-3 ${historyOpen ? "rotate-90" : ""}`}
+                  className={`size-3 transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${historyOpen ? "rotate-90" : ""}`}
                   aria-hidden="true"
                 />
-                {t(($) => $.wakeups.ended, { count: history.length })}
+                {t(($) => $.wakeups.ended, { count: historyCount })}
               </button>
-              {historyOpen && history.map(row)}
+              <IssueSidebarCollapsible open={historyOpen}>
+                {offSystemRules.map(systemRow)}
+                {history.map(row)}
+              </IssueSidebarCollapsible>
             </>
           )}
         </div>
-      )}
+      </IssueSidebarCollapsible>
     </section>
   );
 }
